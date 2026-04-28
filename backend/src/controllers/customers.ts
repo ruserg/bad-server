@@ -1,8 +1,10 @@
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery } from 'mongoose'
+import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
 import Order from '../models/order'
 import User, { IUser } from '../models/user'
+import escapeRegExp from '../utils/escapeRegExp'
 
 // TODO: Добавить guard admin
 // eslint-disable-next-line max-len
@@ -13,6 +15,29 @@ export const getCustomers = async (
     next: NextFunction
 ) => {
     try {
+        const allowedQueryParams = new Set([
+            'page',
+            'limit',
+            'sortField',
+            'sortOrder',
+            'registrationDateFrom',
+            'registrationDateTo',
+            'lastOrderDateFrom',
+            'lastOrderDateTo',
+            'totalAmountFrom',
+            'totalAmountTo',
+            'orderCountFrom',
+            'orderCountTo',
+            'search',
+        ])
+        const hasUnexpectedQueryParam = Object.keys(req.query).some(
+            (queryParam) => !allowedQueryParams.has(queryParam)
+        )
+
+        if (hasUnexpectedQueryParam) {
+            return next(new BadRequestError('Переданы невалидные параметры'))
+        }
+
         const {
             page = 1,
             limit = 10,
@@ -28,6 +53,12 @@ export const getCustomers = async (
             orderCountTo,
             search,
         } = req.query
+        const parsedLimit = Number.parseInt(String(limit), 10)
+        const safeLimit = Number.isNaN(parsedLimit)
+            ? 10
+            : Math.min(Math.max(parsedLimit, 1), 10)
+        const parsedPage = Number.parseInt(String(page), 10)
+        const safePage = Number.isNaN(parsedPage) ? 1 : Math.max(parsedPage, 1)
 
         const filters: FilterQuery<Partial<IUser>> = {}
 
@@ -92,7 +123,7 @@ export const getCustomers = async (
         }
 
         if (search) {
-            const searchRegex = new RegExp(search as string, 'i')
+            const searchRegex = new RegExp(escapeRegExp(search as string), 'i')
             const orders = await Order.find(
                 {
                     $or: [{ deliveryAddress: searchRegex }],
@@ -110,14 +141,28 @@ export const getCustomers = async (
 
         const sort: { [key: string]: any } = {}
 
-        if (sortField && sortOrder) {
-            sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
+        const allowedSortFields = [
+            'createdAt',
+            'totalAmount',
+            'orderCount',
+            'lastOrderDate',
+            'name',
+        ]
+
+        if (
+            typeof sortField === 'string' &&
+            typeof sortOrder === 'string' &&
+            allowedSortFields.includes(sortField)
+        ) {
+            sort[sortField] = sortOrder === 'desc' ? -1 : 1
+        } else {
+            sort.createdAt = -1
         }
 
         const options = {
             sort,
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
+            skip: (safePage - 1) * safeLimit,
+            limit: safeLimit,
         }
 
         const users = await User.find(filters, null, options).populate([
@@ -137,15 +182,15 @@ export const getCustomers = async (
         ])
 
         const totalUsers = await User.countDocuments(filters)
-        const totalPages = Math.ceil(totalUsers / Number(limit))
+        const totalPages = Math.ceil(totalUsers / safeLimit)
 
         res.status(200).json({
             customers: users,
             pagination: {
                 totalUsers,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: safePage,
+                pageSize: safeLimit,
             },
         })
     } catch (error) {

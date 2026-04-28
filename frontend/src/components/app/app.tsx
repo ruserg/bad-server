@@ -45,6 +45,7 @@ import 'react-toastify/dist/ReactToastify.css'
 import { PersistGate } from 'redux-persist/integration/react'
 import AdminCustomerDetail from '../admin/admin-customer-detail'
 import ProfileOrderDetail from '../profile/profile-order-detail'
+import { getCookie } from '../../utils/cookie'
 
 const App = () => (
     <BrowserRouter>
@@ -61,14 +62,23 @@ export default App
 const RouteComponent = () => {
     const location = useLocation()
     const navigate = useNavigate()
-    const { authCheck, checkUserAuth } = useActionCreators(userActions)
+    const { authCheck, checkUserAuth, resetUser } = useActionCreators(userActions)
     const handleModalClose = (path: To | number) => () => navigate(path as To)
 
     useEffect(() => {
-        checkUserAuth()
+        const hasAccessToken = Boolean(getCookie('accessToken'))
+        const hasCsrfToken = Boolean(getCookie('csrfToken'))
+        if (!hasAccessToken && !hasCsrfToken) {
+            resetUser()
+            authCheck()
+            return
+        }
+
+        void checkUserAuth()
             .unwrap()
+            .catch(() => undefined)
             .finally(() => authCheck())
-    }, [checkUserAuth, authCheck])
+    }, [checkUserAuth, authCheck, resetUser])
 
     const locationState = location.state as { background?: Location }
     const background = locationState && locationState.background

@@ -6,6 +6,8 @@ import {
     updateProduct,
 } from '../controllers/products'
 import auth, { roleGuardMiddleware } from '../middlewares/auth'
+import { verifyCsrf } from '../middlewares/csrf'
+import { cacheProductList } from '../middlewares/product-cache'
 import {
     validateObjId,
     validateProductBody,
@@ -15,9 +17,10 @@ import { Role } from '../models/user'
 
 const productRouter = Router()
 
-productRouter.get('/', getProducts)
+productRouter.get('/', cacheProductList, getProducts)
 productRouter.post(
     '/',
+    verifyCsrf,
     auth,
     roleGuardMiddleware(Role.Admin),
     validateProductBody,
@@ -25,6 +28,7 @@ productRouter.post(
 )
 productRouter.delete(
     '/:productId',
+    verifyCsrf,
     auth,
     roleGuardMiddleware(Role.Admin),
     validateObjId,
@@ -32,6 +36,7 @@ productRouter.delete(
 )
 productRouter.patch(
     '/:productId',
+    verifyCsrf,
     auth,
     roleGuardMiddleware(Role.Admin),
     validateObjId,

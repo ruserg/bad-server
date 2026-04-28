@@ -54,10 +54,21 @@ class Api {
     }
 
     protected async request<T>(endpoint: string, options: RequestInit) {
+        const { headers: requestHeaders, ...restOptions } = options
+        const csrf = getCookie('csrfToken')
+        const headers: Record<string, string> = {
+            ...((this.options.headers as object) ?? {}),
+            ...((requestHeaders as object) ?? {}),
+        }
+        if (csrf) {
+            headers['X-CSRF-Token'] = csrf
+        }
         try {
             const res = await fetch(`${this.baseUrl}${endpoint}`, {
                 ...this.options,
-                ...options,
+                ...restOptions,
+                credentials: 'include',
+                headers,
             })
             return await this.handleResponse<T>(res)
         } catch (error) {
@@ -79,18 +90,25 @@ class Api {
         try {
             return await this.request<T>(endpoint, options)
         } catch (error) {
-            const refreshData = await this.refreshToken()
-            if (!refreshData.success) {
-                return Promise.reject(refreshData)
+            if (!getCookie('csrfToken')) {
+                return Promise.reject(error)
             }
-            setCookie('accessToken', refreshData.accessToken)
-            return await this.request<T>(endpoint, {
-                ...options,
-                headers: {
-                    ...options.headers,
-                    Authorization: `Bearer ${getCookie('accessToken')}`,
-                },
-            })
+            try {
+                const refreshData = await this.refreshToken()
+                if (!refreshData.success) {
+                    return Promise.reject(refreshData)
+                }
+                setCookie('accessToken', refreshData.accessToken)
+                return await this.request<T>(endpoint, {
+                    ...options,
+                    headers: {
+                        ...options.headers,
+                        Authorization: `Bearer ${getCookie('accessToken')}`,
+                    },
+                })
+            } catch (refreshError) {
+                return Promise.reject(refreshError)
+            }
         }
     }
 }
@@ -299,7 +317,6 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
     }
 
     createProduct = (data: Omit<IProduct, '_id'>) => {
-        console.log(data)
         return this.requestWithRefresh<IProduct>('/product', {
             method: 'POST',
             body: JSON.stringify(data),
