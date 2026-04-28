@@ -33,7 +33,6 @@ export type ApiListResponse<Type> = {
 class Api {
     private readonly baseUrl: string
     protected options: RequestInit
-    private csrfToken: string | null = null
 
     constructor(baseUrl: string, options: RequestInit = {}) {
         this.baseUrl = baseUrl
@@ -55,51 +54,32 @@ class Api {
     }
 
     protected async request<T>(endpoint: string, options: RequestInit) {
+        const { headers: requestHeaders, ...restOptions } = options
+        const csrf = getCookie('csrfToken')
+        const headers: Record<string, string> = {
+            ...((this.options.headers as object) ?? {}),
+            ...((requestHeaders as object) ?? {}),
+        }
+        if (csrf) {
+            headers['X-CSRF-Token'] = csrf
+        }
         try {
-            const requestOptions: RequestInit = {
+            const res = await fetch(`${this.baseUrl}${endpoint}`, {
                 ...this.options,
-                ...options,
+                ...restOptions,
                 credentials: 'include',
-            }
-
-            if (this.isUnsafeRequest(requestOptions.method)) {
-                const csrfToken = await this.getCsrfToken()
-                requestOptions.headers = {
-                    ...(requestOptions.headers ?? {}),
-                    'X-CSRF-Token': csrfToken,
-                }
-            }
-
-            const res = await fetch(`${this.baseUrl}${endpoint}`, requestOptions)
+                headers,
+            })
             return await this.handleResponse<T>(res)
         } catch (error) {
             return Promise.reject(error)
         }
     }
 
-    private async getCsrfToken() {
-        if (this.csrfToken) {
-            return this.csrfToken
-        }
-
-        const response = await fetch(`${this.baseUrl}/auth/csrf-token`, {
-            method: 'GET',
-            credentials: 'include',
-        })
-
-        const data = await this.handleResponse<{ csrfToken: string }>(response)
-        this.csrfToken = data.csrfToken
-        return this.csrfToken
-    }
-
-    private isUnsafeRequest = (method?: string) => {
-        const requestMethod = method?.toUpperCase() ?? 'GET'
-        return !['GET', 'HEAD', 'OPTIONS'].includes(requestMethod)
-    }
-
     private refreshToken = () => {
         return this.request<UserResponseToken>('/auth/token', {
-            method: 'POST',
+            method: 'GET',
+            credentials: 'include',
         })
     }
 
@@ -110,18 +90,25 @@ class Api {
         try {
             return await this.request<T>(endpoint, options)
         } catch (error) {
-            const refreshData = await this.refreshToken()
-            if (!refreshData.success) {
-                return Promise.reject(refreshData)
+            if (!getCookie('csrfToken')) {
+                return Promise.reject(error)
             }
-            setCookie('accessToken', refreshData.accessToken)
-            return await this.request<T>(endpoint, {
-                ...options,
-                headers: {
-                    ...options.headers,
-                    Authorization: `Bearer ${getCookie('accessToken')}`,
-                },
-            })
+            try {
+                const refreshData = await this.refreshToken()
+                if (!refreshData.success) {
+                    return Promise.reject(refreshData)
+                }
+                setCookie('accessToken', refreshData.accessToken)
+                return await this.request<T>(endpoint, {
+                    ...options,
+                    headers: {
+                        ...options.headers,
+                        Authorization: `Bearer ${getCookie('accessToken')}`,
+                    },
+                })
+            } catch (refreshError) {
+                return Promise.reject(refreshError)
+            }
         }
     }
 }
@@ -324,7 +311,8 @@ export class WebLarekAPI extends Api implements IWebLarekAPI {
 
     logoutUser = () => {
         return this.request<ServerResponse<unknown>>('/auth/logout', {
-            method: 'POST',
+            method: 'GET',
+            credentials: 'include',
         })
     }
 

@@ -5,6 +5,7 @@ import { join } from 'path'
 import BadRequestError from '../errors/bad-request-error'
 import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
+import { clearProductListCache } from '../middlewares/product-cache'
 import Product from '../models/product'
 import movingFile from '../utils/movingFile'
 
@@ -58,6 +59,7 @@ const createProduct = async (
             price,
             title,
         })
+        clearProductListCache()
         return res.status(constants.HTTP_STATUS_CREATED).send(product)
     } catch (error) {
         if (error instanceof MongooseError.ValidationError) {
@@ -103,6 +105,7 @@ const updateProduct = async (
             },
             { runValidators: true, new: true }
         ).orFail(() => new NotFoundError('Нет товара по заданному id'))
+        clearProductListCache()
         return res.send(product)
     } catch (error) {
         if (error instanceof MongooseError.ValidationError) {
@@ -132,6 +135,7 @@ const deleteProduct = async (
         const product = await Product.findByIdAndDelete(productId).orFail(
             () => new NotFoundError('Нет товара по заданному id')
         )
+        clearProductListCache()
         return res.send(product)
     } catch (error) {
         if (error instanceof MongooseError.CastError) {

@@ -3,30 +3,46 @@ import { NextFunction, Request, Response } from 'express'
 import { constants } from 'http2'
 import jwt, { JwtPayload } from 'jsonwebtoken'
 import { Error as MongooseError } from 'mongoose'
-import { REFRESH_TOKEN } from '../config'
+import { CSRF_COOKIE_NAME, LEGACY_CSRF_COOKIE_NAME, REFRESH_TOKEN } from '../config'
 import BadRequestError from '../errors/bad-request-error'
 import ConflictError from '../errors/conflict-error'
 import NotFoundError from '../errors/not-found-error'
 import UnauthorizedError from '../errors/unauthorized-error'
+import {
+    clearCsrfCookie,
+    generateCsrfToken,
+    setCsrfCookie,
+} from '../utils/csrf'
 import User from '../models/user'
-
-const getCsrfToken = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-) => {
-    try {
-        return res.status(200).json({ csrfToken: req.csrfToken() })
-    } catch (error) {
-        return next(error)
-    }
-}
+import { pickAllowedKeys } from '../utils/mongoSafe'
 
 // POST /auth/login
+const reuseOrIssueCsrf = (req: Request, res: Response): string => {
+    const existingPrimary =
+        typeof req.cookies?.[CSRF_COOKIE_NAME] === 'string'
+            ? req.cookies[CSRF_COOKIE_NAME]
+            : ''
+    const existingLegacy =
+        typeof req.cookies?.[LEGACY_CSRF_COOKIE_NAME] === 'string'
+            ? req.cookies[LEGACY_CSRF_COOKIE_NAME]
+            : ''
+    const csrfToken = existingPrimary || existingLegacy || generateCsrfToken()
+    setCsrfCookie(res, csrfToken)
+    return csrfToken
+}
+
 const login = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const { email, password } = req.body
-        const user = await User.findUserByCredentials(email, password)
+        const { email, login: loginField, password } = req.body as {
+            email?: string
+            login?: string
+            password: string
+        }
+        const emailOrLogin = email ?? loginField
+        if (!emailOrLogin) {
+            throw new UnauthorizedError('Неправильные почта или пароль')
+        }
+        const user = await User.findUserByCredentials(emailOrLogin, password)
         const accessToken = user.generateAccessToken()
         const refreshToken = await user.generateRefreshToken()
         res.cookie(
@@ -34,6 +50,7 @@ const login = async (req: Request, res: Response, next: NextFunction) => {
             refreshToken,
             REFRESH_TOKEN.cookie.options
         )
+        reuseOrIssueCsrf(req, res)
         return res.json({
             success: true,
             user,
@@ -58,6 +75,7 @@ const register = async (req: Request, res: Response, next: NextFunction) => {
             refreshToken,
             REFRESH_TOKEN.cookie.options
         )
+        reuseOrIssueCsrf(req, res)
         return res.status(constants.HTTP_STATUS_CREATED).json({
             success: true,
             user: newUser,
@@ -74,6 +92,13 @@ const register = async (req: Request, res: Response, next: NextFunction) => {
         }
         return next(error)
     }
+}
+
+// GET /auth/csrf-token
+const issueCsrfToken = (_req: Request, res: Response) => {
+    const csrfToken = generateCsrfToken()
+    setCsrfCookie(res, csrfToken)
+    res.status(200).json({ csrfToken })
 }
 
 // GET /auth/user
@@ -139,6 +164,7 @@ const logout = async (req: Request, res: Response, next: NextFunction) => {
             maxAge: -1,
         }
         res.cookie(REFRESH_TOKEN.cookie.name, '', expireCookieOptions)
+        clearCsrfCookie(res)
         res.status(200).json({
             success: true,
         })
@@ -166,6 +192,7 @@ const refreshAccessToken = async (
             refreshToken,
             REFRESH_TOKEN.cookie.options
         )
+        reuseOrIssueCsrf(req, res)
         return res.json({
             success: true,
             user: userWithRefreshTkn,
@@ -177,21 +204,21 @@ const refreshAccessToken = async (
 }
 
 const getCurrentUserRoles = async (
-    req: Request,
+    _req: Request,
     res: Response,
     next: NextFunction
 ) => {
     const userId = res.locals.user._id
     try {
-        await User.findById(userId, req.body, {
-            new: true,
-        }).orFail(
-            () =>
-                new NotFoundError(
-                    'Пользователь по заданному id отсутствует в базе'
-                )
-        )
-        res.status(200).json(res.locals.user.roles)
+        const user = await User.findById(userId)
+            .select('roles')
+            .orFail(
+                () =>
+                    new NotFoundError(
+                        'Пользователь по заданному id отсутствует в базе'
+                    )
+            )
+        res.status(200).json(user.roles)
     } catch (error) {
         next(error)
     }
@@ -204,9 +231,19 @@ const updateCurrentUser = async (
 ) => {
     const userId = res.locals.user._id
     try {
-        const updatedUser = await User.findByIdAndUpdate(userId, req.body, {
-            new: true,
-        }).orFail(
+        const payload = pickAllowedKeys(req.body as Record<string, unknown>, [
+            'name',
+            'phone',
+            'email',
+        ])
+
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            { $set: payload },
+            {
+                new: true,
+            }
+        ).orFail(
             () =>
                 new NotFoundError(
                     'Пользователь по заданному id отсутствует в базе'
@@ -219,7 +256,7 @@ const updateCurrentUser = async (
 }
 
 export {
-    getCsrfToken,
+    issueCsrfToken,
     getCurrentUser,
     getCurrentUserRoles,
     login,

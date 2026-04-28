@@ -3,48 +3,67 @@ import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import 'dotenv/config'
 import express, { json, urlencoded } from 'express'
-import rateLimit from 'express-rate-limit'
-import helmet from 'helmet'
 import mongoose from 'mongoose'
-import mongoSanitize from 'express-mongo-sanitize'
 import path from 'path'
-import { DB_ADDRESS } from './config'
+import {
+    ALLOWED_ORIGINS,
+    BODY_PARSER_LIMIT,
+    DB_ADDRESS,
+    MAX_CONCURRENT_REQUESTS,
+    TRUST_PROXY,
+} from './config'
+import { createConcurrencyLimit } from './middlewares/concurrency-limit'
 import errorHandler from './middlewares/error-handler'
-import { csrfRouteProtection } from './middlewares/csrf'
+import { apiLimiter } from './middlewares/rate-limit'
 import serveStatic from './middlewares/serverStatic'
 import routes from './routes'
 
 const { PORT = 3000 } = process.env
 const app = express()
-const allowedOrigin = 'http://localhost:5173'
-const corsOptions = {
-    origin: allowedOrigin,
+
+app.set('trust proxy', TRUST_PROXY)
+
+const normalizeOrigin = (origin: string) => origin.replace(/\/+$/, '')
+const DEFAULT_CORS_ORIGIN =
+    ALLOWED_ORIGINS.find((origin) => normalizeOrigin(origin) === 'http://localhost:5173') ??
+    ALLOWED_ORIGINS[0] ??
+    'http://localhost:5173'
+
+const corsOptions: cors.CorsOptions = {
     credentials: true,
+    origin(origin, cb) {
+        if (!origin) {
+            cb(null, DEFAULT_CORS_ORIGIN)
+            return
+        }
+        const normalizedOrigin = normalizeOrigin(origin)
+        const isAllowed =
+            ALLOWED_ORIGINS.includes(normalizedOrigin) ||
+            /^http:\/\/localhost(?::\d+)?$/.test(normalizedOrigin) ||
+            /^http:\/\/127\.0\.0\.1(?::\d+)?$/.test(normalizedOrigin)
+        if (isAllowed) {
+            cb(null, normalizedOrigin)
+            return
+        }
+        cb(null, false)
+    },
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'],
 }
 
 app.use(cookieParser())
 
 app.use(cors(corsOptions))
-app.use(helmet())
-app.use(
-    rateLimit({
-        windowMs: 1000,
-        max: 10,
-        standardHeaders: true,
-        legacyHeaders: false,
-    })
-)
-app.use(mongoSanitize())
-// app.use(cors({ origin: ORIGIN_ALLOW, credentials: true }));
-// app.use(express.static(path.join(__dirname, 'public')));
+
+app.use(createConcurrencyLimit(MAX_CONCURRENT_REQUESTS))
+app.use(apiLimiter)
 
 app.use(serveStatic(path.join(__dirname, 'public')))
 
-app.use(urlencoded({ extended: true, limit: '16kb' }))
-app.use(json({ limit: '16kb' }))
-app.use(csrfRouteProtection)
+app.use(urlencoded({ extended: true, limit: BODY_PARSER_LIMIT }))
+app.use(json({ limit: BODY_PARSER_LIMIT }))
 
 app.options('*', cors(corsOptions))
+app.use('/api', routes)
 app.use(routes)
 app.use(errors())
 app.use(errorHandler)

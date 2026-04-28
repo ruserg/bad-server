@@ -1,29 +1,36 @@
 import { NextFunction, Request, Response } from 'express'
-import csurf from 'csurf'
 
-const csrfMiddleware = csurf({
-    cookie: {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: false,
-    },
-})
+import { CSRF_COOKIE_NAME, LEGACY_CSRF_COOKIE_NAME } from '../config'
+import { timingSafeCompare } from '../utils/timingSafeCompare'
+import ForbiddenError from '../errors/forbidden-error'
 
-export const csrfTokenMiddleware = csrfMiddleware
+const CSRF_HEADER_CANDIDATES = ['x-csrf-token', 'csrf-token', 'xsrf-token']
 
-const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS']
+export function verifyCsrf(req: Request, _res: Response, next: NextFunction) {
+    const primaryCookieToken =
+        typeof req.cookies?.[CSRF_COOKIE_NAME] === 'string'
+            ? req.cookies[CSRF_COOKIE_NAME]
+            : ''
+    const legacyCookieToken =
+        typeof req.cookies?.[LEGACY_CSRF_COOKIE_NAME] === 'string'
+            ? req.cookies[LEGACY_CSRF_COOKIE_NAME]
+            : ''
+    const cookieToken = primaryCookieToken || legacyCookieToken
 
-export const csrfRouteProtection = (
-    req: Request,
-    res: Response,
-    next: NextFunction
-) => {
-    if (SAFE_METHODS.includes(req.method)) {
-        return next()
+    const headerToken =
+        CSRF_HEADER_CANDIDATES.map((headerName) => req.get(headerName)).find(
+            (headerValue): headerValue is string =>
+                typeof headerValue === 'string' && headerValue.length > 0
+        ) ?? ''
+
+    if (
+        cookieToken &&
+        headerToken &&
+        timingSafeCompare(cookieToken, headerToken)
+    ) {
+        next()
+        return
     }
 
-    return csrfMiddleware(req, res, next)
+    next(new ForbiddenError('Запрос отклонён (CSRF)'))
 }
-
-export const csrfProtection = (req: Request, res: Response) =>
-    res.status(200).json({ csrfToken: req.csrfToken() })
