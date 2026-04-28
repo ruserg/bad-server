@@ -6,6 +6,7 @@ import Order, { IOrder, StatusType } from '../models/order'
 import Product, { IProduct } from '../models/product'
 import User from '../models/user'
 import escapeRegExp from '../utils/escapeRegExp'
+import validator from 'validator'
 
 // eslint-disable-next-line max-len
 // GET /orders?page=2&limit=5&sort=totalAmount&order=desc&orderDateFrom=2024-07-01&orderDateTo=2024-08-01&status=delivering&totalAmountFrom=100&totalAmountTo=1000&search=%2B1
@@ -16,6 +17,26 @@ export const getOrders = async (
     next: NextFunction
 ) => {
     try {
+        const allowedQueryParams = new Set([
+            'page',
+            'limit',
+            'sortField',
+            'sortOrder',
+            'status',
+            'totalAmountFrom',
+            'totalAmountTo',
+            'orderDateFrom',
+            'orderDateTo',
+            'search',
+        ])
+        const hasUnexpectedQueryParam = Object.keys(req.query).some(
+            (queryParam) => !allowedQueryParams.has(queryParam)
+        )
+
+        if (hasUnexpectedQueryParam) {
+            return next(new BadRequestError('Переданы невалидные параметры'))
+        }
+
         const {
             page = 1,
             limit = 10,
@@ -28,6 +49,12 @@ export const getOrders = async (
             orderDateTo,
             search,
         } = req.query
+        const parsedLimit = Number.parseInt(String(limit), 10)
+        const safeLimit = Number.isNaN(parsedLimit)
+            ? 10
+            : Math.min(Math.max(parsedLimit, 1), 10)
+        const parsedPage = Number.parseInt(String(page), 10)
+        const safePage = Number.isNaN(parsedPage) ? 1 : Math.max(parsedPage, 1)
 
         const filters: FilterQuery<Partial<IOrder>> = {}
 
@@ -125,8 +152,8 @@ export const getOrders = async (
 
         aggregatePipeline.push(
             { $sort: sort },
-            { $skip: (Number(page) - 1) * Number(limit) },
-            { $limit: Number(limit) },
+            { $skip: (safePage - 1) * safeLimit },
+            { $limit: safeLimit },
             {
                 $group: {
                     _id: '$_id',
@@ -142,15 +169,15 @@ export const getOrders = async (
 
         const orders = await Order.aggregate(aggregatePipeline)
         const totalOrders = await Order.countDocuments(filters)
-        const totalPages = Math.ceil(totalOrders / Number(limit))
+        const totalPages = Math.ceil(totalOrders / safeLimit)
 
         res.status(200).json({
             orders,
             pagination: {
                 totalOrders,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: safePage,
+                pageSize: safeLimit,
             },
         })
     } catch (error) {
@@ -324,7 +351,7 @@ export const createOrder = async (
             payment,
             phone,
             email,
-            comment,
+            comment: typeof comment === 'string' ? validator.escape(comment) : '',
             customer: userId,
             deliveryAddress: address,
         })

@@ -16,15 +16,20 @@ import routes from './routes'
 
 const { PORT = 3000 } = process.env
 const app = express()
+const allowedOrigin = 'http://localhost:5173'
+const corsOptions = {
+    origin: allowedOrigin,
+    credentials: true,
+}
 
 app.use(cookieParser())
 
-app.use(cors())
+app.use(cors(corsOptions))
 app.use(helmet())
 app.use(
     rateLimit({
-        windowMs: 60 * 1000,
-        max: 60,
+        windowMs: 1000,
+        max: 10,
         standardHeaders: true,
         legacyHeaders: false,
     })
@@ -39,7 +44,7 @@ app.use(urlencoded({ extended: true, limit: '16kb' }))
 app.use(json({ limit: '16kb' }))
 app.use(csrfRouteProtection)
 
-app.options('*', cors())
+app.options('*', cors(corsOptions))
 app.use(routes)
 app.use(errors())
 app.use(errorHandler)
