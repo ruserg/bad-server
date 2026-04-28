@@ -3,10 +3,14 @@ import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import 'dotenv/config'
 import express, { json, urlencoded } from 'express'
+import rateLimit from 'express-rate-limit'
+import helmet from 'helmet'
 import mongoose from 'mongoose'
+import mongoSanitize from 'express-mongo-sanitize'
 import path from 'path'
 import { DB_ADDRESS } from './config'
 import errorHandler from './middlewares/error-handler'
+import { csrfRouteProtection } from './middlewares/csrf'
 import serveStatic from './middlewares/serverStatic'
 import routes from './routes'
 
@@ -16,13 +20,24 @@ const app = express()
 app.use(cookieParser())
 
 app.use(cors())
+app.use(helmet())
+app.use(
+    rateLimit({
+        windowMs: 60 * 1000,
+        max: 60,
+        standardHeaders: true,
+        legacyHeaders: false,
+    })
+)
+app.use(mongoSanitize())
 // app.use(cors({ origin: ORIGIN_ALLOW, credentials: true }));
 // app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(serveStatic(path.join(__dirname, 'public')))
 
-app.use(urlencoded({ extended: true }))
-app.use(json())
+app.use(urlencoded({ extended: true, limit: '16kb' }))
+app.use(json({ limit: '16kb' }))
+app.use(csrfRouteProtection)
 
 app.options('*', cors())
 app.use(routes)

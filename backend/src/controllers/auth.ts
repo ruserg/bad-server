@@ -10,6 +10,18 @@ import NotFoundError from '../errors/not-found-error'
 import UnauthorizedError from '../errors/unauthorized-error'
 import User from '../models/user'
 
+const getCsrfToken = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+) => {
+    try {
+        return res.status(200).json({ csrfToken: req.csrfToken() })
+    } catch (error) {
+        return next(error)
+    }
+}
+
 // POST /auth/login
 const login = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -207,6 +219,7 @@ const updateCurrentUser = async (
 }
 
 export {
+    getCsrfToken,
     getCurrentUser,
     getCurrentUserRoles,
     login,
