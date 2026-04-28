@@ -17,6 +17,11 @@ export const getOrders = async (
     next: NextFunction
 ) => {
     try {
+        const rawQuery = req.originalUrl.split('?')[1] || ''
+        if (/[\[\]\$]|%24|%5B|%5D/i.test(rawQuery)) {
+            return next(new BadRequestError('Переданы невалидные параметры'))
+        }
+
         const allowedQueryParams = new Set([
             'page',
             'limit',
